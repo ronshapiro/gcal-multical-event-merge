@@ -27,22 +27,40 @@ EventMerger.prototype = {
         });
         return event_sets;
     },
-    makeStripes: function (colors) {
+    makeAltTextColors: function ($element, colors) {
+        $element.prepend(" ");
+        $.each(colors.reverse(), function (i, color) {
+            $element.prepend($("<span>")
+                .css({
+                    'background-color': color,
+                    'width': '4px',
+                    'height': '12px',
+                    'display': 'inline-block'
+                }));
+        });
+    },
+    makeStripes: function ($element, colors) {
         var gradient = "repeating-linear-gradient( 45deg,",
             pos = 0;
-        $.each(colors, function (i, c) {
-            gradient += c + " " + pos + "px,";
+        $.each(colors, function (i, color) {
+            gradient += color + " " + pos + "px,";
             pos += 10;
-            gradient += c + " " + pos + "px,";
+            gradient += color + " " + pos + "px,";
         });
         gradient = gradient.slice(0, -1);
         gradient += ")";
-        return gradient;
+        $element.css('background-image', gradient);
     },
     mergeEvents: function (name, event_set) {
         if (event_set.length > 1) {
+
+            var background = $(event_set[0]).css('background-color');
+            // If the background is trasparent, use the text color
+            var style_type = background.indexOf("rgba") == -1 ?
+                        'background-color' : 'color';
+
             var colors = $.map(event_set, function (event) {
-                return $(event).css('background-color');
+                return $(event).css(style_type);
             });
 
             var keep = event_set.shift();
@@ -50,7 +68,11 @@ EventMerger.prototype = {
                 $(this).parent().remove();
             });
 
-            keep.css('background-image', this.makeStripes(colors));
+            if (style_type == 'background-color') {
+                this.makeStripes(keep, colors);
+            } else {
+                this.makeAltTextColors(keep, colors);
+            }
             this.cleanUp && this.cleanUp(keep);
         }
     },
@@ -62,51 +84,65 @@ EventMerger.prototype = {
 
 /*****************************************************************************/
 
-function eventKey($event) {
+// merge timed events in week view
+
+function weekTimedEventKey($event) {
     var event_name = $event.find('dd span').text(),
         event_time = $event.find('dt').text(),
         col = $event.parents('.tg-col-eventwrapper').attr('id');
     return event_name + event_time + col;
 }
 
-function cleanUp($event) {
-    var chip = $event.parents('.chip'),
-        left = Number(chip.css('left').replace(/[%px]*/g, ''));
-    chip.css('width', 100 - left + "%");
-}
-
-var merger = new EventMerger(eventKey, cleanUp);
-$(document).on("DOMNodeInserted", ".tg-mainwrapper", function () {
-    merger.mergeSets($('dl'));
-});
-
-/*****************************************************************************/
-
-// merge day-long events, on top of week mode display
-
-function dayLongEventKey($event) {
+function tableEventKey($event) {
     var event_name = $event.text(),
         $td = $event.parents('td'),
         days = $td.attr("colspan") || 1,
         col = $td.position().left;
-    return event_name + col + days;
+    return event_name + ":" + col + ":" + days;
 }
 
-var dayLongMerger = new EventMerger(dayLongEventKey);
+function monthAllDayEventKey($event) {
+    var row = $event.parents('.month-row').index();
 
-$(document).on("DOMNodeInserted", "#topcontainerwk", function () {
-    dayLongMerger.mergeSets($(".rb-n"));
+    return tableEventKey($event) + ":" + row;
+}
+
+function monthTimedEventKey($event) {
+    var time = $event.find('.te-t').text();
+    return monthAllDayEventKey($event) + time;
+}
+
+function cleanUp($event) {
+    var chip = $event.parents('.chip'),
+        left = Number(chip[0].style.left.replace(/%/g, ''));
+    chip.css('width', 100 - (isNaN(left) ? 0 : left) + "%");
+}
+
+var weekTimed = new EventMerger(weekTimedEventKey, cleanUp),
+    weekAllDay = new EventMerger(tableEventKey),
+    monthTimed = new EventMerger(monthTimedEventKey),
+    monthAllDay = new EventMerger(monthAllDayEventKey);
+
+var merging_main = false;
+$(document).on("DOMNodeInserted", "#gridcontainer", function () {
+    if (!merging_main) {
+        merging_main = true;
+        var grid_container = $(this);
+        weekTimed.mergeSets(grid_container.find('dl'));
+        weekAllDay.mergeSets(grid_container.find(".wk-weektop .rb-n"));
+        monthTimed.mergeSets(grid_container.find(".te"));
+        monthAllDay.mergeSets(grid_container.find(".mv-event-container .rb-n"));
+        merging_main = false;
+    }
 });
 
-// ...and now, in month-view display
-
-function monthDayEventKey($event) {
-    var row = $event.parents('.month-row').index();
-    return dayLongEventKey($event) + row;
-}
-
-var monthViewMerger = new EventMerger(monthDayEventKey);
-
-$(document).on("DOMNodeInserted", ".mv-container", function () {
-    monthViewMerger.mergeSets($(".rb-n"));
+var merging_find_time = false;
+$(document).on("DOMNodeInserted", "#scTgTable", function (e) {
+    if (!merging_find_time) {
+        merging_find_time = true;
+        var find_time_container = $(this);
+        weekTimed.mergeSets(find_time_container.find('dl'));
+        weekAllDay.mergeSets(find_time_container.find(".rb-n"));
+        merging_find_time = false;
+    }
 });
